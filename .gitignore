@@ -1,0 +1,5 @@
+# Ignore virtual environment
+costenv/
+
+# Ignore all .pt files
+*.pt
