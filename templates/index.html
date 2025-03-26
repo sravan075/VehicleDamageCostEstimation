@@ -33,33 +33,40 @@
         .image-container:hover .image-overlay {
             opacity: 1;
         }
-        .dropdown {
-            position: relative;
-            display: inline-block;
-        }
-        .dropdown-content {
-            display: none;
-            position: absolute;
-            background-color: #f9f9f9;
-            min-width: 160px;
-            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
-            z-index: 1;
-            max-height: 200px; /* Limit height */
-            overflow-y: auto; /* Enable vertical scrolling */
-        }
-        .dropdown-content a {
-            color: black;
-            padding: 12px 16px;
-            text-decoration: none;
-            display: block;
-        }
-        .dropdown-content a:hover {
-            background-color: #f1f1f1;
-        }
-        .dropdown:hover .dropdown-content {
-            display: block;
-        }
     </style>
+
+    <!-- Add this script in the <head> section -->
+        <script>
+            const resultsData = {{ results | default([]) | tojson | safe }};
+    
+            function generateBill() {
+                const carModel = document.getElementById('carModel').value;
+    
+                if (!resultsData || resultsData.length === 0) {
+                    alert("No damage data available to generate a bill.");
+                    return;
+                }
+    
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '/generate_bill';
+    
+                const resultInput = document.createElement('input');
+                resultInput.type = 'hidden';
+                resultInput.name = 'bill_data';
+                resultInput.value = JSON.stringify(resultsData);
+    
+                const modelInput = document.createElement('input');
+                modelInput.type = 'hidden';
+                modelInput.name = 'car_model';
+                modelInput.value = carModel;
+    
+                form.appendChild(resultInput);
+                form.appendChild(modelInput);
+                document.body.appendChild(form);
+                form.submit();
+            }
+        </script>
 </head>
 <body class="bg-gradient-to-br from-blue-50 to-blue-100 min-h-screen flex items-center justify-center p-4">
     <div class="w-full max-w-6xl bg-white shadow-2xl rounded-2xl overflow-hidden">
@@ -71,7 +78,7 @@
                 </svg>
                 Vehicle Damage Detection
             </h1>
-            <p class="text-blue-100 mt-2">Upload an image to detect damage and assess severity</p>
+            <p class="text-blue-100 mt-2">Upload up to 4 images to detect damage and assess severity</p>
         </div>
         
         <div class="p-8">
@@ -96,10 +103,11 @@
                     <input 
                         type="file" 
                         id="fileInput" 
-                        name="image" 
+                        name="images" 
                         accept="image/*" 
                         class="hidden" 
-                        onchange="previewImage(event)"
+                        multiple 
+                        onchange="previewImages(event)"
                     >
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-16 h-16 mx-auto text-blue-500 mb-4">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
@@ -108,21 +116,11 @@
                     <p class="text-gray-500 text-sm mt-2">Supported formats: JPG, PNG, WEBP</p>
                 </div>
 
-                <!-- Image Preview -->
-                <div id="previewContainer" class="hidden">
-                    <div class="image-container relative rounded-2xl overflow-hidden shadow-lg hover-lift">
-                        <img id="imagePreview" class="w-full h-auto object-cover" alt="Image Preview">
-                        <div class="image-overlay flex items-center justify-center">
-                            <button type="submit" class="bg-blue-600 text-white px-6 py-3 rounded-full hover:bg-blue-700 transition-colors flex items-center">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-6 h-6 mr-2">
-                                    <path fill-rule="evenodd" d="M4.5 5.25A2.25 2.25 0 016.75 3h10.5a2.25 2.25 0 012.25 2.25v10.5a2.25 2.25 0 01-2.25 2.25H6.75a2.25 2.25 0 01-2.25-2.25V5.25zm13.5 0V15h1.5V5.25a.75.75 0 00-.75-.75h-10.5a.75.75 0 00-.75.75v1.5h10.5zM5.25 6.75v7.5a.75.75 0 00.75.75h9a.75.75 0 00.75-.75v-7.5a.75.75 0 00-.75-.75h-9a.75.75 0 00-.75.75z" clip-rule="evenodd" />
-                                    <path d="M3.75 12h7.5v1.5h-7.5V12zM3.75 16.5h7.5V18h-7.5v-1.5z" />
-                                </svg>
-                                Analyze Damage
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <!-- Image Previews -->
+                <div id="previewContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-6"></div>
+
+                <!-- Submit Button -->
+                <button type="submit" class="w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors">Analyze Damage</button>
             </form>
 
             <!-- Error Messages -->
@@ -133,149 +131,76 @@
             {% endif %}
 
             <!-- Results Display -->
-            {% if processed_images %}
-            <div class="mt-8 grid grid-cols-1 md:grid-cols-2 gap-8">
-                <!-- Damage Detection Results -->
-                <div class="space-y-4">
-                    <h2 class="text-2xl font-bold text-blue-700">Damage Detection</h2>
-                    <div class="image-container relative rounded-2xl overflow-hidden shadow-lg hover-lift">
-                        <img src="data:image/jpeg;base64,{{ processed_images['damage'] }}" class="w-full h-auto object-cover" alt="Damage Detection">
-                    </div>
-
-                    {% if damage_classes %}
-                    <div class="bg-blue-50 rounded-2xl p-4">
-                        <h3 class="text-lg font-semibold text-blue-800 mb-3">Detected Damage Type</h3>
-                        <div class="flex flex-wrap gap-3">
-                            {% for class_name in damage_classes %}
-                            <div class="flex items-center bg-white rounded-full px-3 py-1 shadow-sm">
-                                <span 
-                                    class="w-3 h-3 mr-2 rounded-full" 
-                                    style="background-color: rgb{{ damage_colors[class_name] }};"
-                                ></span>
-                                <span class="text-sm text-gray-700">{{ class_name }}</span>
-                            </div>
-                            {% endfor %}
+            {% if results %}
+            <div class="mt-8">
+                <h2 class="text-2xl font-bold text-blue-700 mb-4">Damage Detection Results</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                    {% for result in results %}
+                    <div class="space-y-4">
+                        {% if result.error %}
+                        <div class="p-4 bg-red-100 text-red-700 rounded-lg">{{ result.error }}</div>
+                        {% else %}
+                        <div class="image-container relative rounded-2xl overflow-hidden shadow-lg hover-lift">
+                            <img src="data:image/jpeg;base64,{{ result.labeled_image }}" class="w-full h-auto object-cover">
                         </div>
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-800 mb-2">Detected Damage</h3>
+                            <p class="text-gray-700">Component: {{ result.damage }}</p>
+                            <p class="text-gray-700">Severity: {{ result.severity }}</p>
+                            <h3 class="text-lg font-semibold text-gray-800 mt-4">Cost Breakdown</h3>
+                            <ul>
+                                <li>Painting Cost: ₹{{ result.cost_estimate['Painting Cost'] }}</li>
+                                <li>Labour Cost: ₹{{ result.cost_estimate['Labour Cost'] }}</li>
+                                <li>Part Price: ₹{{ result.cost_estimate['Part Price'] }}</li>
+                                <li>Component Price: ₹{{ result.cost_estimate['Component Price'] }}</li>
+                                <li><strong>Repair Cost:</strong> ₹{{ result.cost_estimate['Total Repair Cost'] }}</li>
+                            </ul>
+                        </div>
+                        {% endif %}
                     </div>
-                    {% endif %}
+                    {% endfor %}
                 </div>
 
-                <!-- Severity Assessment Results -->
-                <div class="space-y-4">
-                    <h2 class="text-2xl font-bold text-blue-700">Severity Assessment</h2>
-                    <div class="image-container relative rounded-2xl overflow-hidden shadow-lg hover-lift">
-                        <img src="data:image/jpeg;base64,{{ processed_images['severity'] }}" class="w-full h-auto object-cover" alt="Severity Assessment">
-                    </div>
+                <!-- Total Repair Cost -->
+                <div class="mt-8 bg-blue-100 p-6 rounded-lg shadow">
+                    <h3 class="text-2xl font-bold text-blue-800">Total Repair Estimate</h3>
+                    <p class="text-3xl font-bold text-blue-600">₹{{ total_cost }}</p>
+                </div>
 
-                    {% if severity_classes %}
-                    <div class="bg-blue-50 rounded-2xl p-4">
-                        <h3 class="text-lg font-semibold text-blue-800 mb-3">Severity Level</h3>
-                        <div class="flex flex-wrap gap-3">
-                            {% for class_id, class_name in severity_classes.items() %}
-                            <div class="flex items-center bg-white rounded-full px-3 py-1 shadow-sm">
-                                <span 
-                                    class="w-3 h-3 mr-2 rounded-full" 
-                                    style="background-color: rgb{{ severity_colors[class_id] }};"
-                                ></span>
-                                <span class="text-sm text-gray-700">{{ class_name }}</span>
-                            </div>
-                            {% endfor %}
-                        </div>
-                    </div>
-                    {% endif %}
+                <!-- Button to Download Detailed Repair Estimate -->
+                <div class="mt-4">
+                    <button 
+                        onclick="generateBill()" 
+                        class="w-full bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors"
+                    >
+                        Download Detailed Repair Estimate
+                    </button>
                 </div>
-            </div>
-            {% endif %}
-
-            <!-- Cost Estimate Section -->
-            {% if cost_estimate %}
-            <div class="mt-8 bg-white p-6 rounded-2xl shadow-lg">
-                <h2 class="text-2xl font-bold text-blue-700 mb-4">Damage Cost Estimate</h2>
-                
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                        <h3 class="text-lg font-semibold text-gray-800 mb-2">Detected Damage</h3>
-                        <div class="bg-blue-50 p-3 rounded-lg">
-                            <p class="text-gray-700"><span class="font-medium">Component:</span> {{ detected_damage }}</p>
-                            <p class="text-gray-700"><span class="font-medium">Severity:</span> {{ detected_severity }}</p>
-                        </div>
-                    </div>
-
-                    <div>
-                        <h3 class="text-lg font-semibold text-gray-800 mb-2">Cost Breakdown</h3>
-                        <div class="space-y-2">
-                            <div class="flex justify-between p-2 bg-blue-50 rounded">
-                                <span class="text-gray-700">Painting Cost:</span>
-                                <span class="font-medium">₹{{ cost_estimate.get('Painting Cost', 0) }}</span>
-                            </div>
-                            <div class="flex justify-between p-2 bg-blue-50 rounded">
-                                <span class="text-gray-700">Labour Cost:</span>
-                                <span class="font-medium">₹{{ cost_estimate.get('Labour Cost', 0) }}</span>
-                            </div>
-                            <div class="flex justify-between p-2 bg-blue-50 rounded">
-                                <span class="text-gray-700">Part Price:</span>
-                                <span class="font-medium">₹{{ cost_estimate.get('Part Price', 0) }}</span>
-                            </div>
-                            <div class="flex justify-between p-2 bg-blue-50 rounded">
-                                <span class="text-gray-700">Component Price:</span>
-                                <span class="font-medium">₹{{ cost_estimate.get('Component Price', 0) }}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="mt-6 p-4 bg-blue-100 rounded-lg">
-                    <h3 class="text-xl font-bold text-blue-800 mb-2">Total Repair Estimate</h3>
-                    <p class="text-2xl font-bold text-blue-600">₹{{ cost_estimate.get('Total Repair Cost', 0) }}</p>
-                </div>
-                
-                {% if cost_estimate.get('Parts') %}
-                <div class="mt-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-2">Parts Detail</h3>
-                    <div class="bg-gray-50 p-3 rounded-lg max-h-40 overflow-y-auto">
-                        {% for part in cost_estimate.get('Parts', []) %}
-                        <div class="flex justify-between border-b py-1">
-                            <span class="text-gray-700">{{ part.title }}</span>
-                            <span class="font-medium">₹{{ part.price }}</span>
-                        </div>
-                        {% endfor %}
-                    </div>
-                </div>
-                {% endif %}
-                
-                {% if cost_estimate.get('Components') %}
-                <div class="mt-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-2">Components Detail</h3>
-                    <div class="bg-gray-50 p-3 rounded-lg max-h-40 overflow-y-auto">
-                        {% for component in cost_estimate.get('Components', []) %}
-                        <div class="flex justify-between border-b py-1">
-                            <span class="text-gray-700">{{ component.title }}</span>
-                            <span class="font-medium">₹{{ component.price }}</span>
-                        </div>
-                        {% endfor %}
-                    </div>
-                </div>
-                {% endif %}
             </div>
             {% endif %}
         </div>
     </div>
 
     <script>
-        function previewImage(event) {
-            const fileInput = document.getElementById('fileInput');
+        function previewImages(event) {
+            const files = event.target.files;
             const previewContainer = document.getElementById('previewContainer');
-            const imagePreview = document.getElementById('imagePreview');
+            previewContainer.innerHTML = '';
 
-            if (fileInput.files && fileInput.files[0]) {
-                const reader = new FileReader();
-                reader.onload = function (e) {
-                    imagePreview.src = e.target.result;
-                    previewContainer.classList.remove('hidden');
-                };
-                reader.readAsDataURL(fileInput.files[0]);
+            if (files) {
+                Array.from(files).forEach(file => {
+                    const reader = new FileReader();
+                    reader.onload = function (e) {
+                        const img = document.createElement('img');
+                        img.src = e.target.result;
+                        img.className = 'w-full h-auto object-cover rounded-2xl';
+                        previewContainer.appendChild(img);
+                    };
+                    reader.readAsDataURL(file);
+                });
             }
         }
     </script>
+    
 </body>
 </html>

@@ -1,20 +1,32 @@
-from flask import Flask, request, render_template
+from flask import Flask, request, render_template, send_file
 from ultralytics import YOLO
 import cv2
 import numpy as np
 import base64
 import pandas as pd
+from io import BytesIO
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import (
+    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, 
+    Image, PageBreak
+)
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+from datetime import datetime
+
 
 app = Flask(__name__)
 
 # Path to the CSV file
-csv_path = "Z:\\Projects\\Main Project\\Project\\YoloV8\\price-dataset\\cleaned_cars.csv"
+csv_path = r"Z:\\Projects\\Main Project\\Project\\backend\\price.csv"
 df = pd.read_csv(csv_path)
 car_models = df['carmodel'].unique().tolist()
 
 # Paths to YOLO models
-damage_model_path = r"Z:\\Projects\\Main Project\\Project\\YoloV8\\trained-weights\\damage-classification-weights-v1\\runs\\detect\\train\\weights\\best.pt"
-severity_model_path = r"Z:\\Projects\\Main Project\\Project\\YoloV8\\trained-weights\\severity-classification-weights\\content\\runs\\detect\\train\\weights\\best.pt"
+damage_model_path = r"Z:\\Projects\\Main Project\\Project\\backend\\model\\damage.pt"
+severity_model_path = r"Z:\\Projects\\Main Project\\Project\\backend\\model\\severity.pt"
 damage_model = YOLO(damage_model_path)
 severity_model = YOLO(severity_model_path)
 
@@ -26,41 +38,24 @@ painting_costs = {
 }
 
 # Define severity-based labor costs
-severity_costs = {
-    "minor-scratch": {"labour": 2500, "additions": ["paint"]},
-    "moderate-scratch": {"labour": 3000, "additions": ["paint", "putty", "primer", "tinner"]},
-    "severe-scratch": {"labour": 4000, "additions": ["paint", "putty", "primer", "tinner"]},
-    "minor-dent": {"labour": 4000, "additions": ["PDR"]},
-    "moderate-dent": {"labour": 5000, "additions": ["paint", "putty", "PDR"]},
-    "severe-dent": {"labour": 6000, "additions": ["paint", "part price"]},
-    "moderate-broken": {"labour": 7000, "additions": ["paint", "part_price", "component price"]},
-    "severe-broken": {"labour": 8000, "additions": ["paint", "part price", "component price", "internal damage estimate"]}
+labour_costs = {
+    "minor-scratch": 2500, "moderate-scratch": 3000, "severe-scratch": 4000,
+    "minor-dent": 4000, "moderate-dent": 5000, "severe-dent": 6000,
+    "moderate-broken": 7000, "severe-broken": 8000
 }
 
-# Mapping class names to primary parts
-primary_parts_map = {
-    'Door': 'Door',
-    'Front-Bumper': 'Front Bumper',
-    'Front-fender': 'Fender',
-    'Front-lamp-Damage': 'Headlight',
-    'Light': 'Headlight',
-    'Rear-Bumper': 'Rear Bumper',
-    'Rear-Fender': 'Rear Fender',
-    'Rear-Trunk': 'Boot',
-    'Rear-Windshield': 'Rear Windshield',
-    'Rear-lamp-Damage': 'Rear Lamp',
-    'Side-Screen': 'Window',
-    'Sidemirror-Damage': 'Outside Mirror',
-    'Windscreen-Damage': 'Front Windshield',
-    'bonnet-damage': 'Bonnet',
-    'doorouter-damage': 'Door',
-    'fender-damage': 'Fender',
-    'front-bumper-damage': 'Front Bumper',
-    'quarterpanel-damage': 'Quarter Panel',
-    'rear-bumper-damage': 'Rear Bumper'
+# Define additional repair material costs
+repair_materials = {
+    "paint": 0, "putty": 700, "primer": 500, "tinner": 300, "PDR": 1000
 }
 
-# Mapping class names to related components
+# Define internal damage costs
+internal_damage_costs = {
+    'Door': 2000, 'Front-Bumper': 6000, 'Rear-Bumper': 4000, 'Rear-Fender': 5000, 'Rear-Trunk': 3000,
+    'doorouter-damage': 2000, 'fender-damage': 5000, 'front-bumper-damage': 6000, 'rear-bumper-damage': 4000, 'bonnet-damage': 6000
+}
+
+# Define component mappings
 class_to_components = {
     'Door': ['Door', 'Door Handle', 'Door Handle Bracket', 'Door Hinge', 'Door Latch',
              'Door Lock', 'Door Seal', 'Door Trim Cap', 'Door Lock Cylinder', 'Door Lock Link',
@@ -91,151 +86,336 @@ class_to_components = {
 
 # Cost estimation function
 def estimate_damage_cost(car_model, damaged_part, severity):
+    # Map fender-damage to Front-fender
+    if damaged_part == "fender-damage":
+        damaged_part = "Front-fender"
+
+    # Treat doorouter-damage as Door
+    if damaged_part == "doorouter-damage":
+        damaged_part = "Door"
+
     paint_cost = painting_costs.get(damaged_part, 0)
+    labour_cost = labour_costs.get(severity, 0)
 
-    # Get exact part match from CSV
-    primary_part = primary_parts_map.get(damaged_part, damaged_part)
-    part_df = df[(df["carmodel"] == car_model) & (df["component"] == primary_part)]
-    
-    # If no exact match, check for main keyword (e.g., "bumper" instead of "front-bumper")
-    if part_df.empty:
-        main_part_name = damaged_part.split('-')[0]  # Extracts main part name
-        part_df = df[(df["carmodel"] == car_model) & (df["component"].str.contains(main_part_name, case=False, na=False))]
-    
-    # Calculate Part Price and extract titles
-    part_price = part_df["price"].sum()
-    part_list = part_df[["title", "price"]].to_dict(orient="records")  # Store titles & costs
+    primary_part_price = 0
+    component_price = 0
+    part_list = []
+    component_list = []
 
-    # Identify components (subparts) not in part_df
-    component_df = df[(df["carmodel"] == car_model) & (df["component"].str.contains(damaged_part.split('-')[0], case=False, na=False)) & (~df["component"].isin(part_df["component"]))]
-    
-    # Calculate Component Price and extract titles
-    component_price = component_df["price"].sum()
-    component_list = component_df[["title", "price"]].to_dict(orient="records")
+    # Get all related components except the main part
+    related_components = class_to_components.get(damaged_part, [])
 
-    # Internal Damage Placeholder
-    internal_damage_price = 5000 if "internal damage estimate" in severity_costs[severity]["additions"] else 0  
+    if related_components:
+        # Fetch all related component prices
+        component_df = df[(df["carmodel"] == car_model) & (df["component"].isin(related_components))]
 
-    # Get labor cost based on severity
-    labour_info = severity_costs.get(severity, {"labour": 0, "additions": []})
-    total_cost = labour_info["labour"]
+        if not component_df.empty:
+            # Find the highest-priced component and set it as the main part
+            max_price_row = component_df.loc[component_df["price"].idxmax()]
+            primary_part_price = max_price_row["price"]
+            main_part_name = max_price_row["component"]
 
-    # Additional cost calculations
-    if "paint" in labour_info["additions"]:
-        total_cost += paint_cost
-    if "putty" in labour_info["additions"]:
-        total_cost += 700
-    if "primer" in labour_info["additions"]:
-        total_cost += 500
-    if "tinner" in labour_info["additions"]:
-        total_cost += 300
-    if "PDR" in labour_info["additions"]:
-        total_cost += 1000
-    if "part price" in labour_info["additions"]:
-        total_cost += part_price
-    if "component price" in labour_info["additions"]:
-        total_cost += component_price
-    if "internal damage estimate" in labour_info["additions"]:
-        total_cost += internal_damage_price
+            # Exclude the main part from the component price calculation
+            filtered_component_df = component_df[component_df["component"] != main_part_name]
+
+            # Store main part details
+            part_list = [{"title": max_price_row["title"], "price": primary_part_price}]
+
+            # If severity is moderate-broken or severe-broken, sum up all associated component prices
+            if severity in ["moderate-broken", "severe-broken"]:
+                component_price = filtered_component_df["price"].sum()
+                component_list = filtered_component_df[["title", "price"]].to_dict(orient="records")
+
+    # Reset price for non-broken/non-severe damages
+    if severity not in ["moderate-broken", "severe-dent", "severe-broken"]:
+        primary_part_price = 0
+        part_list = []
+        component_price = 0
+        component_list = []
+
+    additional_cost = 0
+    #if severity in ["moderate-scratch", "severe-scratch"]:
+        #additional_cost += sum(repair_materials[item] for item in ["putty", "primer", "tinner"])
+    if severity == "minor-scratch":
+        additional_cost += paint_cost
+    if severity == "moderate-scratch":
+        additional_cost += paint_cost
+    if severity == "severe-scratch":
+        additional_cost += paint_cost+repair_materials["putty"]
+    if severity == "minor-dent":
+        additional_cost += repair_materials["PDR"]
+    if severity == "moderate-dent":
+        additional_cost += sum(repair_materials[item] for item in ["putty"])+paint_cost
+    if severity == "severe-dent":
+        additional_cost += primary_part_price + paint_cost
+    if severity == "moderate-broken":
+        additional_cost += paint_cost + primary_part_price + component_price
+    if severity == "severe-broken":
+        additional_cost += primary_part_price + component_price + paint_cost + internal_damage_costs.get(damaged_part, 0)
+
+    total_cost = labour_cost + additional_cost
 
     return {
         "Painting Cost": paint_cost,
-        "Labour Cost": labour_info["labour"],
-        "Part Price": part_price,
-        "Parts": part_list,  # List of parts (titles + cost)
-        "Component Price": component_price,
-        "Components": component_list,  # List of components (titles + cost)
-        "Total Repair Cost": total_cost
+        "Labour Cost": labour_cost,
+        "Part Price": primary_part_price if severity in ["moderate-broken", "severe-dent", "severe-broken"] else 0,
+        "Parts": part_list if severity in ["moderate-broken", "severe-dent", "severe-broken"] else [],
+        "Component Price": component_price if severity in ["moderate-broken", "severe-broken"] else 0,
+        "Components": component_list if severity in ["moderate-broken", "severe-broken"] else [],
+        "Total Repair Cost": total_cost,
     }
+
+
+
+
+def generate_detailed_bill(results, car_model):
+    # Create a PDF in memory
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    styles = getSampleStyleSheet()
+
+    # Custom styles
+    title_style = ParagraphStyle(
+        'Title',
+        parent=styles['Title'],
+        fontSize=16,
+        textColor=colors.HexColor('#2C3E50'),
+        alignment=TA_CENTER
+    )
+    subtitle_style = ParagraphStyle(
+        'Subtitle',
+        parent=styles['Normal'],
+        fontSize=12,
+        textColor=colors.HexColor('#34495E'),
+        alignment=TA_CENTER
+    )
+    
+    header_style = ParagraphStyle(
+        'Header',
+        parent=styles['Normal'],
+        fontSize=10,
+        textColor=colors.HexColor('#2980B9')
+    )
+
+    # Prepare content
+    content = []
+
+    # Title and Header
+    content.append(Paragraph("Vehicle Damage Repair Estimate", title_style))
+    content.append(Paragraph(f"Car Model: Treno {car_model}", subtitle_style))
+    content.append(Paragraph(f"Date: {datetime.now().strftime('%d %B %Y')}", subtitle_style))
+    content.append(Spacer(1, 12))
+
+    # Aggregators for total costs
+    total_parts_price = 0
+    total_labour_cost = 0
+    total_painting_cost = 0
+    total_component_price = 0
+    all_bill_items = []
+
+    # Combined parts data
+    parts_data = [['Title', 'Component', 'Price (₹)']]
+
+    # Process all results
+    for result in results:
+        if 'cost_estimate' not in result:
+            continue
+
+        cost_estimate = result['cost_estimate']
+        damage_type = result['damage']
+        severity = result['severity']
+
+        # Add components from all results
+        if cost_estimate.get('Parts'):
+            for part in cost_estimate['Parts']:
+                component_name = part.get('component', 'Primary Part')
+                parts_data.append([
+                    part['title'], 
+                    component_name,
+                    part['price']
+                ])
+                total_parts_price += part['price']
+                all_bill_items.append({
+                    'title': part['title'],
+                    'component': component_name,
+                    'price': part['price']
+                })
+
+        # Add additional components
+        if cost_estimate.get('Components'):
+            for component in cost_estimate['Components']:
+                parts_data.append([
+                    component['title'], 
+                    component.get('component', 'Additional Component'),
+                    component['price']
+                ])
+                total_component_price += component['price']
+                all_bill_items.append({
+                    'title': component['title'],
+                    'component': component.get('component', 'Additional Component'),
+                    'price': component['price']
+                })
+
+        # Accumulate costs
+        total_labour_cost += cost_estimate.get('Labour Cost', 0)
+        total_painting_cost += cost_estimate.get('Painting Cost', 0)
+
+    # Create parts table
+    parts_table = Table(parts_data, colWidths=[250, 150, 100])
+    parts_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#3498DB')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,0), 10),
+        ('BOTTOMPADDING', (0,0), (-1,0), 8),
+        ('GRID', (0,0), (-1,-1), 1, colors.black)
+    ]))
+
+    content.append(parts_table)
+    content.append(Spacer(1, 12))
+
+    # Final Cost Summary
+    summary_data = [
+        ['Cost Category', 'Amount (₹)'],
+        ['Total Parts Price', total_parts_price],
+        ['Total Component Price', total_component_price],
+        ['Total Labour Cost', total_labour_cost],
+        ['Total Painting Cost', total_painting_cost],
+        ['Grand Total', total_parts_price + total_component_price + total_labour_cost + total_painting_cost]
+    ]
+
+    summary_table = Table(summary_data, colWidths=[300, 200])
+    summary_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2ECC71')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,0), 10),
+        ('BOTTOMPADDING', (0,0), (-1,0), 8),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#F39C12')),
+        ('GRID', (0,0), (-1,-1), 1, colors.black)
+    ]))
+
+    content.append(Paragraph("Cost Summary", subtitle_style))
+    content.append(Spacer(1, 12))
+    content.append(summary_table)
+
+    # Build PDF
+    doc.build(content)
+    
+    # Move to the beginning of the BytesIO buffer
+    buffer.seek(0)
+    
+    return buffer
 
 @app.route('/', methods=['GET', 'POST'])
 def home():
     if request.method == 'POST':
-        file = request.files.get('image')
         selected_car_model = request.form.get('carModel')
-        
-        # Debug prints
-        print(f"Selected car model: {selected_car_model}")
-        print(f"File received: {file.filename if file else 'None'}")
-        
-        if not file or not selected_car_model:
-            return render_template('index.html', car_models=car_models, error="Please select both a car model and an image")
+        files = request.files.getlist('images')
 
-        # Read and process the image
-        npimg = np.frombuffer(file.read(), np.uint8)
-        image = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
-        
-        try:
-            # Process image with YOLO models
-            damage_results = damage_model.predict(source=image, imgsz=640, conf=0.5, save=False)
-            severity_results = severity_model.predict(source=image, imgsz=640, conf=0.5, save=False)
-            
-            # Check if we have detection results
-            if len(damage_results[0].boxes.cls) > 0 and len(severity_results[0].boxes.cls) > 0:
-                detected_damage = damage_model.names[int(damage_results[0].boxes.cls[0])]
-                detected_severity = severity_model.names[int(severity_results[0].boxes.cls[0])]
-                
-                print(f"Detected damage: {detected_damage}")
-                print(f"Detected severity: {detected_severity}")
-                
-                # Calculate cost estimate
-                cost_estimate = estimate_damage_cost(selected_car_model, detected_damage, detected_severity)
-                
-                # Draw bounding boxes for damage
-                damage_image = image.copy()
-                for result in damage_results:
-                    for box in result.boxes.xyxy:
+        if not files or not selected_car_model:
+            return render_template('index.html', car_models=car_models, error="Please select a car model and upload at least one image.")
+
+        total_cost = 0
+        results = []
+
+        for file in files:
+            try:
+                npimg = np.frombuffer(file.read(), np.uint8)
+                image = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+
+                damage_results = damage_model.predict(source=image, imgsz=640, conf=0.5, save=False)
+                severity_results = severity_model.predict(source=image, imgsz=640, conf=0.5, save=False)
+
+                if len(damage_results[0].boxes.cls) > 0 and len(severity_results[0].boxes.cls) > 0:
+                    detected_damage = damage_model.names[int(damage_results[0].boxes.cls[0])]
+                    detected_severity = severity_model.names[int(severity_results[0].boxes.cls[0])]
+
+                    cost_estimate = estimate_damage_cost(selected_car_model, detected_damage, detected_severity)
+                    total_repair_cost = cost_estimate["Total Repair Cost"]
+                    total_cost += cost_estimate["Total Repair Cost"]
+
+                    labeled_image = image.copy()
+                    for box in damage_results[0].boxes.xyxy:
                         x1, y1, x2, y2 = map(int, box)
-                        cv2.rectangle(damage_image, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                        cv2.putText(damage_image, f"{detected_damage}", (x1, y1-10), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-                
-                # Draw bounding boxes for severity
-                severity_image = image.copy()
-                for result in severity_results:
-                    for box in result.boxes.xyxy:
-                        x1, y1, x2, y2 = map(int, box)
-                        cv2.rectangle(severity_image, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                        cv2.putText(severity_image, f"{detected_severity}", (x1, y1-10), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-                
-                # Convert labeled images to base64
-                _, damage_buffer = cv2.imencode('.jpg', damage_image)
-                damage_encoded = base64.b64encode(damage_buffer).decode('utf-8')
-                
-                _, severity_buffer = cv2.imencode('.jpg', severity_image)
-                severity_encoded = base64.b64encode(severity_buffer).decode('utf-8')
-                
-                # Create variables that match your template
-                processed_images = {
-                    'damage': damage_encoded,
-                    'severity': severity_encoded
-                }
-                
-                # Create class names that match your template expectations
-                damage_classes = [detected_damage]
-                damage_colors = {detected_damage: "(255,0,0)"}
-                
-                severity_classes = {0: detected_severity}
-                severity_colors = {0: "(0,0,255)"}
-                
-                return render_template(
-                    'index.html', car_models=car_models,
-                    detected_damage=detected_damage, detected_severity=detected_severity,
-                    cost_estimate=cost_estimate, labeled_image=damage_encoded,
-                    processed_images=processed_images,
-                    damage_classes=damage_classes, damage_colors=damage_colors,
-                    severity_classes=severity_classes, severity_colors=severity_colors
-                )
-            else:
-                return render_template('index.html', car_models=car_models, 
-                                      error="No damage or severity detected in the image. Please try another image.")
-        except Exception as e:
-            print(f"Error during processing: {e}")
-            return render_template('index.html', car_models=car_models, 
-                                  error=f"Error processing image: {str(e)}")
-    
+                        cv2.rectangle(labeled_image, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                        cv2.putText(labeled_image, detected_damage, (x1, y1 - 10), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+
+                    _, buffer = cv2.imencode('.jpg', labeled_image)
+                    encoded_image = base64.b64encode(buffer).decode('utf-8')
+
+                    results.append({
+                        "damage": detected_damage,
+                        "severity": detected_severity,
+                        "cost_estimate": cost_estimate,
+                        "labeled_image": encoded_image
+                    })
+                else:
+                    results.append({"error": "Oops! No damage detected. Try a clearer image of the damaged area."})
+
+            except Exception as e:
+                results.append({"error": f"Error processing image: {str(e)}"})
+
+        return render_template('index.html', car_models=car_models, results=results if results else [], total_cost=total_cost)
+
+
     return render_template('index.html', car_models=car_models)
+
+@app.route('/generate_bill', methods=['POST'])
+@app.route('/generate_bill', methods=['POST'])
+def generate_bill():
+    bill_data = request.form.get('bill_data')
+    car_model = request.form.get('car_model')
+    import json
+    
+    # Parse the bill data
+    try:
+        results = json.loads(bill_data)
+        
+        # Sanitize results to remove non-serializable elements
+        sanitized_results = []
+        for result in results:
+            sanitized_result = result.copy()
+            
+            # Remove any non-serializable cost estimate components
+            if 'cost_estimate' in sanitized_result:
+                sanitized_estimate = sanitized_result['cost_estimate'].copy()
+                
+                # Convert Parts and Components to basic dictionaries
+                if 'Parts' in sanitized_estimate:
+                    sanitized_estimate['Parts'] = [
+                        {k: v for k, v in part.items() if isinstance(v, (str, int, float))}
+                        for part in sanitized_estimate['Parts']
+                    ]
+                
+                if 'Components' in sanitized_estimate:
+                    sanitized_estimate['Components'] = [
+                        {k: v for k, v in component.items() if isinstance(v, (str, int, float))}
+                        for component in sanitized_estimate['Components']
+                    ]
+                
+                sanitized_result['cost_estimate'] = sanitized_estimate
+            
+            sanitized_results.append(sanitized_result)
+        
+        # Generate the bill
+        bill_buffer = generate_detailed_bill(sanitized_results, car_model)
+        
+        # Send the PDF as a file
+        return send_file(
+            bill_buffer, 
+            as_attachment=True, 
+            download_name='repair_estimate_bill.pdf', 
+            mimetype='application/pdf'
+        )
+    
+    except json.JSONDecodeError as e:
+        return f"JSON Decode Error: {str(e)}", 400
+    except Exception as e:
+        return f"Error generating bill: {str(e)}", 500
 
 if __name__ == '__main__':
     app.run(debug=True)
