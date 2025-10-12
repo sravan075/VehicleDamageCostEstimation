@@ -15,6 +15,8 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from datetime import datetime
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
 
 
 app = Flask(__name__)
@@ -29,7 +31,6 @@ damage_model_path = r"Z:\\Projects\\Main Project\\Project\\backend\\model\\damag
 severity_model_path = r"Z:\\Projects\\Main Project\\Project\\backend\\model\\severity.pt"
 damage_model = YOLO(damage_model_path)
 severity_model = YOLO(severity_model_path)
-
 # Define painting costs
 painting_costs = {
     'Door': 4000, 'Front-Bumper': 3000, 'Front-fender': 1500, 'Rear-Bumper': 3000,
@@ -86,14 +87,13 @@ class_to_components = {
 
 # Cost estimation function
 def estimate_damage_cost(car_model, damaged_part, severity):
-    # Map fender-damage to Front-fender
+    # Handle mapping for fender and door components
     if damaged_part == "fender-damage":
         damaged_part = "Front-fender"
-
-    # Treat doorouter-damage as Door
     if damaged_part == "doorouter-damage":
         damaged_part = "Door"
 
+    # Painting and labor costs
     paint_cost = painting_costs.get(damaged_part, 0)
     labour_cost = labour_costs.get(severity, 0)
 
@@ -102,59 +102,63 @@ def estimate_damage_cost(car_model, damaged_part, severity):
     part_list = []
     component_list = []
 
-    # Get all related components except the main part
+    # Get related components based on damaged part
     related_components = class_to_components.get(damaged_part, [])
 
     if related_components:
-        # Fetch all related component prices
+        # Filter data for matching car model and related components
         component_df = df[(df["carmodel"] == car_model) & (df["component"].isin(related_components))]
 
         if not component_df.empty:
-            # Find the highest-priced component and set it as the main part
+            # Get the most expensive part as primary part
             max_price_row = component_df.loc[component_df["price"].idxmax()]
             primary_part_price = max_price_row["price"]
             main_part_name = max_price_row["component"]
 
-            # Exclude the main part from the component price calculation
+            # Exclude main part to calculate component price
             filtered_component_df = component_df[component_df["component"] != main_part_name]
 
-            # Store main part details
+            # Prepare part list
             part_list = [{"title": max_price_row["title"], "price": primary_part_price}]
 
-            # If severity is moderate-broken or severe-broken, sum up all associated component prices
-            if severity in ["moderate-broken", "severe-broken"]:
+            # For more severe damages, calculate component prices
+            if severity in ["moderate-broken", "severe-dent", "severe-broken"]:
                 component_price = filtered_component_df["price"].sum()
                 component_list = filtered_component_df[["title", "price"]].to_dict(orient="records")
 
-    # Reset price for non-broken/non-severe damages
+    # Reset prices for less severe damages
     if severity not in ["moderate-broken", "severe-dent", "severe-broken"]:
         primary_part_price = 0
         part_list = []
         component_price = 0
         component_list = []
 
+    # Calculate additional cost based on severity
     additional_cost = 0
-    #if severity in ["moderate-scratch", "severe-scratch"]:
-        #additional_cost += sum(repair_materials[item] for item in ["putty", "primer", "tinner"])
     if severity == "minor-scratch":
         additional_cost += paint_cost
-    if severity == "moderate-scratch":
+    elif severity == "moderate-scratch":
         additional_cost += paint_cost
-    if severity == "severe-scratch":
-        additional_cost += paint_cost+repair_materials["putty"]
-    if severity == "minor-dent":
-        additional_cost += repair_materials["PDR"]
-    if severity == "moderate-dent":
-        additional_cost += sum(repair_materials[item] for item in ["putty"])+paint_cost
-    if severity == "severe-dent":
+    elif severity == "severe-scratch":
+        additional_cost += paint_cost
+    elif severity == "minor-dent":
+        additional_cost += 0
+    elif severity == "moderate-dent":
+        additional_cost += paint_cost
+    elif severity == "severe-dent":
         additional_cost += primary_part_price + paint_cost
-    if severity == "moderate-broken":
+    elif severity == "moderate-broken":
         additional_cost += paint_cost + primary_part_price + component_price
-    if severity == "severe-broken":
-        additional_cost += primary_part_price + component_price + paint_cost + internal_damage_costs.get(damaged_part, 0)
+    elif severity == "severe-broken":
+        additional_cost += (
+            primary_part_price + component_price + paint_cost + 
+            internal_damage_costs.get(damaged_part, 0)
+        )
 
+    # Total cost calculation
     total_cost = labour_cost + additional_cost
 
+    # Detailed cost breakdown
     return {
         "Painting Cost": paint_cost,
         "Labour Cost": labour_cost,
@@ -162,14 +166,13 @@ def estimate_damage_cost(car_model, damaged_part, severity):
         "Parts": part_list if severity in ["moderate-broken", "severe-dent", "severe-broken"] else [],
         "Component Price": component_price if severity in ["moderate-broken", "severe-broken"] else 0,
         "Components": component_list if severity in ["moderate-broken", "severe-broken"] else [],
+        "Internal Damage Cost": internal_damage_costs.get(damaged_part, 0) if severity == "severe-broken" else 0,
         "Total Repair Cost": total_cost,
     }
 
 
 
-
 def generate_detailed_bill(results, car_model):
-    # Create a PDF in memory
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     styles = getSampleStyleSheet()
@@ -189,20 +192,13 @@ def generate_detailed_bill(results, car_model):
         textColor=colors.HexColor('#34495E'),
         alignment=TA_CENTER
     )
-    
-    header_style = ParagraphStyle(
-        'Header',
-        parent=styles['Normal'],
-        fontSize=10,
-        textColor=colors.HexColor('#2980B9')
-    )
 
     # Prepare content
     content = []
 
     # Title and Header
     content.append(Paragraph("Vehicle Damage Repair Estimate", title_style))
-    content.append(Paragraph(f"Car Model: Treno {car_model}", subtitle_style))
+    content.append(Paragraph(f"Car Model: {car_model}", subtitle_style))
     content.append(Paragraph(f"Date: {datetime.now().strftime('%d %B %Y')}", subtitle_style))
     content.append(Spacer(1, 12))
 
@@ -211,54 +207,41 @@ def generate_detailed_bill(results, car_model):
     total_labour_cost = 0
     total_painting_cost = 0
     total_component_price = 0
-    all_bill_items = []
+    total_internal_damage_cost = 0
 
-    # Combined parts data
+    # Parts data table
     parts_data = [['Title', 'Component', 'Price (₹)']]
 
-    # Process all results
     for result in results:
         if 'cost_estimate' not in result:
             continue
 
         cost_estimate = result['cost_estimate']
-        damage_type = result['damage']
-        severity = result['severity']
-
-        # Add components from all results
+        
+        # Add parts
         if cost_estimate.get('Parts'):
             for part in cost_estimate['Parts']:
-                component_name = part.get('component', 'Primary Part')
                 parts_data.append([
                     part['title'], 
-                    component_name,
+                    'Primary Part',
                     part['price']
                 ])
                 total_parts_price += part['price']
-                all_bill_items.append({
-                    'title': part['title'],
-                    'component': component_name,
-                    'price': part['price']
-                })
 
-        # Add additional components
+        # Add components
         if cost_estimate.get('Components'):
             for component in cost_estimate['Components']:
                 parts_data.append([
                     component['title'], 
-                    component.get('component', 'Additional Component'),
+                    'Additional Component',
                     component['price']
                 ])
                 total_component_price += component['price']
-                all_bill_items.append({
-                    'title': component['title'],
-                    'component': component.get('component', 'Additional Component'),
-                    'price': component['price']
-                })
 
-        # Accumulate costs
+        # Accumulate other costs
         total_labour_cost += cost_estimate.get('Labour Cost', 0)
         total_painting_cost += cost_estimate.get('Painting Cost', 0)
+        total_internal_damage_cost += cost_estimate.get('Internal Damage Cost', 0)
 
     # Create parts table
     parts_table = Table(parts_data, colWidths=[250, 150, 100])
@@ -282,18 +265,20 @@ def generate_detailed_bill(results, car_model):
         ['Total Component Price', total_component_price],
         ['Total Labour Cost', total_labour_cost],
         ['Total Painting Cost', total_painting_cost],
-        ['Grand Total', total_parts_price + total_component_price + total_labour_cost + total_painting_cost]
+        ['Total Internal Damage Cost', total_internal_damage_cost],
+        ['Grand Total', total_parts_price + total_component_price + total_labour_cost + 
+                        total_painting_cost + total_internal_damage_cost]
     ]
 
     summary_table = Table(summary_data, colWidths=[300, 200])
     summary_table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2ECC71')),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#3498DB')),
         ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('FONTSIZE', (0,0), (-1,0), 10),
         ('BOTTOMPADDING', (0,0), (-1,0), 8),
-        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#F39C12')),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#3498DB')),
         ('GRID', (0,0), (-1,-1), 1, colors.black)
     ]))
 
@@ -303,11 +288,9 @@ def generate_detailed_bill(results, car_model):
 
     # Build PDF
     doc.build(content)
-    
-    # Move to the beginning of the BytesIO buffer
     buffer.seek(0)
-    
     return buffer
+
 
 @app.route('/', methods=['GET', 'POST'])
 def home():
@@ -354,7 +337,7 @@ def home():
                         "labeled_image": encoded_image
                     })
                 else:
-                    results.append({"error": "Oops! No damage detected. Try a clearer image of the damaged area."})
+                    results.append({"error": "Oops! No damage detected. Try uploading a clearer image!"})
 
             except Exception as e:
                 results.append({"error": f"Error processing image: {str(e)}"})

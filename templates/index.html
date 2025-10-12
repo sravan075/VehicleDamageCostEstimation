@@ -5,10 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vehicle Damage Detection</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
     <style>
         body {
-            font-family: 'Inter', sans-serif;
+            font-family: 'Poppins', sans-serif;
+            background-image: url('image1.jpg');
         }
         .hover-lift {
             transition: transform 0.3s ease, box-shadow 0.3s ease;
@@ -35,42 +37,41 @@
         }
     </style>
 
-    <!-- Add this script in the <head> section -->
-        <script>
-            const resultsData = {{ results | default([]) | tojson | safe }};
+    <script>
+        const resultsData = {{ results | default([]) | tojson | safe }};
     
-            function generateBill() {
-                const carModel = document.getElementById('carModel').value;
+        function generateBill() {
+            const carModel = document.getElementById('carModel').value;
     
-                if (!resultsData || resultsData.length === 0) {
-                    alert("No damage data available to generate a bill.");
-                    return;
-                }
-    
-                const form = document.createElement('form');
-                form.method = 'POST';
-                form.action = '/generate_bill';
-    
-                const resultInput = document.createElement('input');
-                resultInput.type = 'hidden';
-                resultInput.name = 'bill_data';
-                resultInput.value = JSON.stringify(resultsData);
-    
-                const modelInput = document.createElement('input');
-                modelInput.type = 'hidden';
-                modelInput.name = 'car_model';
-                modelInput.value = carModel;
-    
-                form.appendChild(resultInput);
-                form.appendChild(modelInput);
-                document.body.appendChild(form);
-                form.submit();
+            if (!resultsData || resultsData.length === 0) {
+                alert("No damage data available to generate a bill.");
+                return;
             }
-        </script>
+    
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '/generate_bill';
+    
+            const resultInput = document.createElement('input');
+            resultInput.type = 'hidden';
+            resultInput.name = 'bill_data';
+            resultInput.value = JSON.stringify(resultsData);
+    
+            const modelInput = document.createElement('input');
+            modelInput.type = 'hidden';
+            modelInput.name = 'car_model';
+            modelInput.value = carModel;
+    
+            form.appendChild(resultInput);
+            form.appendChild(modelInput);
+            document.body.appendChild(form);
+            form.submit();
+        }
+    </script>
 </head>
-<body class="bg-gradient-to-br from-blue-50 to-blue-100 min-h-screen flex items-center justify-center p-4">
+<body class="bg-gradient-to-br from-[#F39C12]/10 to-[#D35400]/10 min-h-screen flex items-center justify-center p-4">
     <div class="w-full max-w-6xl bg-white shadow-2xl rounded-2xl overflow-hidden">
-        <div class="p-6 bg-blue-600 text-white">
+        <div class="p-6 bg-[#D35400] text-white">
             <h1 class="text-3xl font-bold flex items-center">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-10 h-10 mr-3">
                     <path d="M3.375 4.5C2.339 4.5 1.5 5.34 1.5 6.375V13.5h12V6.375c0-1.036-.84-1.875-1.875-1.875h-8.25zM13.5 15h-12v2.625c0 1.035.84 1.875 1.875 1.875h.375a3 3 0 116 0h3a.75.75 0 00.75-.75V15z" />
@@ -78,15 +79,15 @@
                 </svg>
                 Vehicle Damage Detection
             </h1>
-            <p class="text-blue-100 mt-2">Upload up to 4 images to detect damage and assess severity</p>
+            <p class="text-[#F39C12]/80 mt-2">Upload up to 4 images to detect damage and assess severity</p>
         </div>
         
         <div class="p-8">
             <form id="uploadForm" action="/" method="post" enctype="multipart/form-data" class="space-y-6">
                 <!-- Car Model Selection -->
                 <div class="mb-4">
-                    <label for="carModel" class="block text-gray-700 mb-2 font-medium">Select Car Model</label>
-                    <select name="carModel" id="carModel" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <label for="carModel" class="block text-[#A04000] mb-2 font-medium">Select Car Model</label>
+                    <select name="carModel" id="carModel" class="w-full p-3 border border-[#D1D5DB] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#D35400]">
                         <option value="">Please select a car model</option>
                         {% for model in car_models %}
                         <option value="{{ model }}">{{ model }}</option>
@@ -97,7 +98,7 @@
                 <!-- Image Upload -->
                 <div 
                     id="dropzone" 
-                    class="border-2 border-dashed border-blue-300 rounded-2xl p-8 text-center hover-lift cursor-pointer transition-all"
+                    class="border-2 border-dashed border-[#F39C12] rounded-2xl p-8 text-center hover-lift cursor-pointer transition-all"
                     onclick="document.getElementById('fileInput').click();"
                 >
                     <input 
@@ -109,18 +110,18 @@
                         multiple 
                         onchange="previewImages(event)"
                     >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-16 h-16 mx-auto text-blue-500 mb-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-16 h-16 mx-auto text-[#D35400] mb-4">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                     </svg>
-                    <p class="text-blue-600 font-semibold">Click to Upload or Drag and Drop</p>
-                    <p class="text-gray-500 text-sm mt-2">Supported formats: JPG, PNG, WEBP</p>
+                    <p class="text-[#A04000] font-semibold">Click to Upload or Drag and Drop</p>
+                    <p class="text-[#4B5563] text-sm mt-2">Supported formats: JPG, PNG, WEBP</p>
                 </div>
 
                 <!-- Image Previews -->
                 <div id="previewContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-6"></div>
 
                 <!-- Submit Button -->
-                <button type="submit" class="w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors">Analyze Damage</button>
+                <button type="submit" class="w-full bg-[#D35400] text-white px-6 py-3 rounded-lg hover:bg-[#A04000] transition-colors">Analyze Damage</button>
             </form>
 
             <!-- Error Messages -->
@@ -133,7 +134,7 @@
             <!-- Results Display -->
             {% if results %}
             <div class="mt-8">
-                <h2 class="text-2xl font-bold text-blue-700 mb-4">Damage Detection Results</h2>
+                <h2 class="text-2xl font-bold text-[#A04000] mb-4">Damage Detection Results</h2>
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
                     {% for result in results %}
                     <div class="space-y-4">
@@ -144,15 +145,16 @@
                             <img src="data:image/jpeg;base64,{{ result.labeled_image }}" class="w-full h-auto object-cover">
                         </div>
                         <div>
-                            <h3 class="text-lg font-semibold text-gray-800 mb-2">Detected Damage</h3>
-                            <p class="text-gray-700">Component: {{ result.damage }}</p>
-                            <p class="text-gray-700">Severity: {{ result.severity }}</p>
-                            <h3 class="text-lg font-semibold text-gray-800 mt-4">Cost Breakdown</h3>
+                            <h3 class="text-lg font-semibold text-[#A04000] mb-2">Detected Damage</h3>
+                            <p class="text-[#4B5563]">Component: {{ result.damage }}</p>
+                            <p class="text-[#4B5563]">Severity: {{ result.severity }}</p>
+                            <h3 class="text-lg font-semibold text-[#A04000] mt-4">Cost Breakdown</h3>
                             <ul>
                                 <li>Painting Cost: ₹{{ result.cost_estimate['Painting Cost'] }}</li>
                                 <li>Labour Cost: ₹{{ result.cost_estimate['Labour Cost'] }}</li>
                                 <li>Part Price: ₹{{ result.cost_estimate['Part Price'] }}</li>
                                 <li>Component Price: ₹{{ result.cost_estimate['Component Price'] }}</li>
+                                <li>Internal Damage Estimate: ₹{{ result.cost_estimate['Internal Damage Cost'] }}</li>
                                 <li><strong>Repair Cost:</strong> ₹{{ result.cost_estimate['Total Repair Cost'] }}</li>
                             </ul>
                         </div>
@@ -162,16 +164,16 @@
                 </div>
 
                 <!-- Total Repair Cost -->
-                <div class="mt-8 bg-blue-100 p-6 rounded-lg shadow">
-                    <h3 class="text-2xl font-bold text-blue-800">Total Repair Estimate</h3>
-                    <p class="text-3xl font-bold text-blue-600">₹{{ total_cost }}</p>
+                <div class="mt-8 bg-[#F39C12]/10 p-6 rounded-lg shadow">
+                    <h3 class="text-2xl font-bold text-[#A04000]">Total Repair Estimate</h3>
+                    <p class="text-3xl font-bold text-[#D35400]">₹{{ total_cost }}</p>
                 </div>
 
                 <!-- Button to Download Detailed Repair Estimate -->
                 <div class="mt-4">
                     <button 
                         onclick="generateBill()" 
-                        class="w-full bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors"
+                        class="w-full bg-[#2ECC71] text-white px-6 py-3 rounded-lg hover:bg-[#27AE60] transition-colors"
                     >
                         Download Detailed Repair Estimate
                     </button>
